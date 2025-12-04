@@ -1,0 +1,7 @@
+// src/index.js
+import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./index.css"; // assume tailwind or the project's css is included
+
+createRoot(document.getElementById("root")).render(<App />);
