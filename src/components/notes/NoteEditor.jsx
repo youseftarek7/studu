@@ -1,11 +1,11 @@
 // src/components/notes/NoteEditor.jsx
-// Clean, self-contained NoteEditor with robust AI proxy handling and no top-level `return`.
-// Replaces the previous version that produced "return outside of function" during build.
+// Final corrected NoteEditor component — no top-level `return`, no stray JS outside the component.
+// Replace the existing file with this version and rerun your build.
 
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, MessageSquare, StickyNote, Lightbulb, AlertTriangle, Bot, Loader2, X, PenTool } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-import { addUserDocument, updateUserDocument, deleteUserDocument, listenToCollectionOrdered } from "../../firebase/firestore";
+import { addUserDocument, updateUserDocument, deleteUserDocument } from "../../firebase/firestore";
 import NoteBlock from "./NoteBlock";
 import useCollection from "../../hooks/useCollection";
 import { collection, query, orderBy } from "firebase/firestore";
@@ -14,59 +14,58 @@ import { db } from "../../firebase/config";
 /**
  * NoteEditor
  * - Subscribes to notes for a given course/lesson using useCollection
- * - Adds/updates/deletes note blocks via addUserDocument / updateUserDocument / deleteUserDocument
+ * - Adds/updates/deletes note blocks via Firestore helpers
  * - Calls a server-side AI proxy (configurable via REACT_APP_GEMINI_PROXY_URL)
- * - Safe JSON parsing and robust error handling so build/runtime errors are avoided
+ * - Robust error handling and safe JSON parsing to avoid runtime build errors
  */
 export default function NoteEditor({ theme, user, authUser, course, lesson, onBack, showToast }) {
   const { getProfileId } = useAuth();
   const profileId = getProfileId();
 
-  // Build a Query for notes under nested path: <user>_courses/<course.id>/lessons/<lesson.id>/notes
-  const notesColQuery = () => {
+  // Build a Query for notes under nested path:
+  // artifacts/<appId>/users/<profileId>/<user>_courses/<courseId>/lessons/<lessonId>/notes
+  const notesQuery = () => {
     if (!profileId || !course?.id || !lesson?.id) return null;
     try {
-      return query(
-        collection(
-          db,
-          "artifacts",
-          process.env.REACT_APP_APP_ID || "study-planner-v1",
-          "users",
-          profileId,
-          `${user}_courses`,
-          course.id,
-          "lessons",
-          lesson.id,
-          "notes"
-        ),
-        orderBy("createdAt")
+      const colRef = collection(
+        db,
+        "artifacts",
+        process.env.REACT_APP_APP_ID || "study-planner-v1",
+        "users",
+        profileId,
+        `${user}_courses`,
+        course.id,
+        "lessons",
+        lesson.id,
+        "notes"
       );
+      return query(colRef, orderBy("createdAt"));
     } catch (err) {
-      console.error("Failed to build notes query:", err);
+      console.error("Failed to construct notes query:", err);
       return null;
     }
   };
 
-  const { data: notes } = useCollection(notesColQuery, [profileId, course?.id, lesson?.id]);
+  const { data: notes = [] } = useCollection(notesQuery, [profileId, course?.id, lesson?.id]);
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
 
   useEffect(() => {
-    // no-op: placeholder if you need side-effects when notes change
+    // placeholder if you want side-effects based on notes
   }, [notes]);
 
   const addNoteBlock = async (type, content = "") => {
     if (!profileId || !course?.id || !lesson?.id) {
-      alert("لا يمكن إضافة ملاحظة الآن. تحقق من تحديد المادة/الدرس.");
+      alert("لا يمكن إضافة ملاحظة الآن. تحقق من اختيار المادة/الدرس.");
       return;
     }
     const colPath = `${user}_courses/${course.id}/lessons/${lesson.id}/notes`;
     try {
       await addUserDocument(profileId, colPath, { type, content });
     } catch (e) {
-      console.error("خطأ في إضافة الملاحظة:", e);
-      alert("فشل إضافة الملاحظة: " + (e.message || e));
+      console.error("Failed to add note:", e);
+      alert("فشل إضافة الملاحظة: " + (e?.message || e));
     }
   };
 
@@ -90,7 +89,7 @@ export default function NoteEditor({ theme, user, authUser, course, lesson, onBa
     }
   };
 
-  // AI proxy: robust call + safe parsing
+  // AI proxy handler (safe parsing + clear errors)
   const handleAiAction = async (action) => {
     setAiMenuOpen(false);
 
@@ -105,14 +104,13 @@ export default function NoteEditor({ theme, user, authUser, course, lesson, onBa
     let prompt = "";
 
     if (action === "summarize") {
-      prompt = `قم بتلخيص هذه الملاحظات الدراسية لدرس بعنوان "${lesson.title}" بشكل نقاط رئيسية واضحة. ${userPersona}\n\nالملاحظات:\n${notesText}`;
+      prompt = `قم بتلخيص هذه الملاحظات لدرس "${lesson.title}" بشكل نقاط رئيسية. ${userPersona}\n\nالملاحظات:\n${notesText}`;
     } else if (action === "quiz") {
-      prompt = `بناءً على هذه الملاحظات لدرس "${lesson.title}"، قم بإنشاء سؤال واحد للاختبار من نوع اختيار من متعدد مع الإجابة الصحيحة. ${userPersona}\n\nالملاحظات:\n${notesText}`;
+      prompt = `بناءً على هذه الملاحظات لدرس "${lesson.title}"، أنشئ سؤال اختيار من متعدد مع الإجابة الصحيحة. ${userPersona}\n\nالملاحظات:\n${notesText}`;
     } else if (action === "explain") {
-      prompt = `اشرح لي أهم فكرة في هذا الدرس "${lesson.title}" بشكل مبسط جداً وكأنك تشرح لصديق. ${userPersona}\n\nالملاحظات:\n${notesText}`;
+      prompt = `اشرح أهم فكرة في هذا الدرس "${lesson.title}" بشكل مبسط. ${userPersona}\n\nالملاحظات:\n${notesText}`;
     }
 
-    // Proxy URL: set environment variable REACT_APP_GEMINI_PROXY_URL or fallback to same-origin path
     const proxyUrl = process.env.REACT_APP_GEMINI_PROXY_URL || "/api/gemini";
 
     try {
@@ -122,21 +120,21 @@ export default function NoteEditor({ theme, user, authUser, course, lesson, onBa
         body: JSON.stringify({ prompt }),
       });
 
-      const rawText = await resp.text().catch(() => null);
+      // read raw text to avoid json() throwing on empty responses
+      const raw = await resp.text().catch(() => null);
 
       if (!resp.ok) {
-        // Try to parse error details if any
         let parsed = null;
-        try { parsed = rawText ? JSON.parse(rawText) : null; } catch (_) { parsed = rawText; }
+        try { parsed = raw ? JSON.parse(raw) : null; } catch (e) { parsed = raw || null; }
         console.error("AI proxy returned non-OK:", resp.status, parsed);
-        alert("فشل التحليل بالذكاء الاصطناعي: " + (parsed?.error || parsed || `Server returned ${resp.status}`));
+        alert("فشل التحليل بالذكاء الاصطناعي: " + (parsed?.error || parsed || `الخادم أعاد ${resp.status}`));
         setIsAiLoading(false);
         return;
       }
 
       let json = null;
-      try { json = rawText ? JSON.parse(rawText) : null; } catch (e) {
-        console.error("Failed to parse JSON from AI proxy:", e, rawText);
+      try { json = raw ? JSON.parse(raw) : null; } catch (e) {
+        console.error("Failed to parse AI proxy JSON:", e, raw);
         alert("فشل تحليل رد الخادم.");
         setIsAiLoading(false);
         return;
@@ -144,14 +142,14 @@ export default function NoteEditor({ theme, user, authUser, course, lesson, onBa
 
       const text = json?.result || null;
       if (!text) {
-        console.error("AI proxy response missing text:", json);
-        alert("فشل التحليل بالذكاء الاصطناعي: الرد غير صالح.");
+        console.error("AI proxy missing text:", json);
+        alert("الرد من الخادم لا يحتوي على نص صالح.");
         setIsAiLoading(false);
         return;
       }
 
       await addNoteBlock("ai", text);
-      showToast("تم إضافة رد الذكاء الاصطناعي ✨");
+      showToast && showToast("تم إضافة رد الذكاء الاصطناعي ✨");
     } catch (err) {
       console.error("Network/Proxy error calling AI:", err);
       alert("فشل الاتصال بخدمة الذكاء الاصطناعي: مشكلة في الاتصال بالخادم.");
@@ -164,10 +162,10 @@ export default function NoteEditor({ theme, user, authUser, course, lesson, onBa
     <div className="h-[calc(100vh-150px)] flex flex-col">
       <div className="flex items-center justify-between mb-4 pb-4 border-b">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className={`p-2 bg-white border ${theme.border} rounded-full hover:bg-slate-50`}><ArrowLeft size={18} /></button>
+          <button onClick={onBack} className={`p-2 bg-white border ${theme?.border || "border-slate-200"} rounded-full hover:bg-slate-50`}><ArrowLeft size={18} /></button>
           <div>
-            <h3 className="font-bold text-xl">{lesson.title}</h3>
-            <span className="text-xs opacity-60">{course.title}</span>
+            <h3 className="font-bold text-xl">{lesson?.title}</h3>
+            <span className="text-xs opacity-60">{course?.title}</span>
           </div>
         </div>
 
